@@ -1,25 +1,27 @@
 import streamlit as st
-from backend import chatbot,retrieve_all_threads
-from langchain_core.messages import HumanMessage
+from tools_backend import chatbot, retrieve_all_threads
+from langchain_core.messages import HumanMessage,AIMessage,ToolMessage
 import uuid
 
 
-
-## *****************utiity functions**********************
+# *****************utiity functions**********************
 
 def generate_thread_id():
     thread_id = uuid.uuid4()
     return thread_id
+
 
 def reset_chat():
     thread_id = generate_thread_id()
     st.session_state['thread_id'] = thread_id
     add_thread(st.session_state['thread_id'])
     st.session_state['message_history'] = []
-    
+
+
 def add_thread(thread_id):
     if thread_id not in st.session_state['chat_threads']:
         st.session_state['chat_threads'].append(thread_id)
+
 
 def load_conversation(thread_id):
     try:
@@ -31,12 +33,12 @@ def load_conversation(thread_id):
         return []
 
 
-#************************* setting up session state *******************************************
+# ************************* setting up session state *******************************************
 
 # list to store messages in session dictionary
 if 'message_history' not in st.session_state:
     st.session_state['message_history'] = []
-    
+
 # unique thread id  for each chat
 if 'thread_id' not in st.session_state:
     st.session_state['thread_id'] = generate_thread_id()
@@ -45,14 +47,18 @@ if 'thread_id' not in st.session_state:
 if 'chat_threads' not in st.session_state:
     st.session_state['chat_threads'] = retrieve_all_threads()
 
-add_thread(st.session_state['thread_id'])   
-    
-  
-#**************defining config********************
-    
-# st.session_state 
-CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}      
+add_thread(st.session_state['thread_id'])
 
+
+# **************defining config********************
+
+# st.session_state
+CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']},
+          'metadata': {
+              'thread_id': st.session_state['thread_id']
+          },
+          'run_name': "chat_run"
+          }
 
 
 # *********************side bar ****************************
@@ -68,16 +74,16 @@ st.sidebar.header("My Conversations")
 for thread_id in st.session_state['chat_threads'][::-1]:
     if st.sidebar.button(str(thread_id)):
         st.session_state['thread_id'] = thread_id
-        
+
         messages = load_conversation(thread_id)
-        
+
         temp_messages = []
         for msg in messages:
-            if isinstance(msg,HumanMessage):
-                role='user'
+            if isinstance(msg, HumanMessage):
+                role = 'user'
             else:
-                role='assistant'
-            temp_messages.append({'role':role,'content':msg.content})
+                role = 'assistant'
+            temp_messages.append({'role': role, 'content': msg.content})
         st.session_state['message_history'] = temp_messages
 
 
@@ -86,26 +92,46 @@ for message in st.session_state['message_history']:
     with st.chat_message(message['role']):
         st.text(message['content'])
 
-## **** taking user input*******
+# **** taking user input*******
 user_input = st.chat_input('Type here')
 
 
-## ******** enabling chatting UI********
+# ******** enabling chatting UI********
 if user_input:
 
     # first add the message to message_history
-    st.session_state['message_history'].append({'role': 'user', 'content': user_input})
+    st.session_state['message_history'].append(
+        {'role': 'user', 'content': user_input})
     with st.chat_message('user'):
         st.text(user_input)
 
-    
     with st.chat_message('assistant'):
-        
-       ai_message = st.write_stream(
-           message_chunk.content for message_chunk,metadata in chatbot.stream(
-                {'messages': [HumanMessage(content=user_input)]},
-                 config = CONFIG,
-                 stream_mode= 'messages'
-             ))
+       tool_status = st.status("🤖 Thinking…", expanded=False)
+       def ai_only_stream():
+          for message_chunk, metadata in chatbot.stream({'messages': [HumanMessage(content=user_input)]},
+                 config=CONFIG,
+                 stream_mode='messages'):
+              
+              #if message is from tools put it in status container 
+              if isinstance(message_chunk, ToolMessage):
+                tool_name = getattr(message_chunk, "name", "tool")
+                tool_status.update(
+                    label=f"🔧 Using `{tool_name}` …",
+                    state="running",
+                    expanded=True,
+                )
+                # if message is from AI yield it 
+              if isinstance(message_chunk, AIMessage):
+                  # yield only AI message
+                  yield message_chunk.content
+
+       ai_message = st.write_stream(ai_only_stream())
+       
+       tool_status.update(
+        label="✅ Done",    
+        state="complete",
+        expanded=False,
+    )
+              
     st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
     
