@@ -1,8 +1,11 @@
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage,HumanMessage
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import ChatHuggingFace,HuggingFaceEndpoint
+from langchain_huggingface import ChatHuggingFace,HuggingFaceEndpoint,HuggingFaceEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode,tools_condition
@@ -16,14 +19,44 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# llm = ChatGoogleGenerativeAI(model='gemini-2.5-flash',streaming = True)
-model = HuggingFaceEndpoint(
-    repo_id="deepseek-ai/DeepSeek-V3.1",
-    task="text-generation"
+
+
+
+
+llm = ChatGoogleGenerativeAI(model='gemini-2.5-flash',streaming = True)
+
+# model = HuggingFaceEndpoint(
+#     repo_id="NousResearch/Hermes-2-Pro-Llama-3-8B",
+#     task="text-generation"
+# )
+# llm = ChatHuggingFace(llm=model)
+
+# embedding mode from hugging face
+
+embedding_model = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
-llm = ChatHuggingFace(llm=model)
 
 
+
+### rag steps 
+
+
+ ### loader 
+loader = PyPDFLoader("C:\\Users\\abhip\\Desktop\\Langraph\\6_Chatbot_using_langgraph\\DA_2026_Syllabus.pdf")
+docs = loader.load()
+
+
+### splitting  
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
+chunks = splitter.split_documents(docs)
+
+### creating embedding for chunks  and storing in vectorstore 
+vector_store = FAISS.from_documents(chunks,embedding_model)
+
+### creating a retriver 
+
+retriever = vector_store.as_retriever(search_type = 'similarity',search_kwargs={'k':4})
 
 ####### tools ######
 
@@ -66,12 +99,36 @@ def get_stock_price(symbol: str) -> dict:
     r = requests.get(url)
     return r.json()
 
+@tool 
+def rag_tool(query:str)->dict:
+    """
+    USE this tool when the query is about syllabus of GATE exam
+    Retreive relevant information from the pdf document.
+    Use this tool when the use ask factual/conceptual questions
+    that might be answered from the stored documents
+    """
+   
+    result = retriever.invoke(query)
+    context = [doc.page_content for doc in result]
+    metadata = [doc.metadata for doc in result]
+    
+    return {
+        'query':query,
+        'context':context,
+        'metadata':metadata
+    }
+
+
+
 
 # tool list 
-tools = [search_tool,calculator,get_stock_price]
+tools = [search_tool,calculator,get_stock_price,rag_tool]
 
 # llm binding with tools 
 llm_with_tools = llm.bind_tools(tools)
+
+
+
 
 
 

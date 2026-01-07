@@ -1,5 +1,5 @@
 import streamlit as st
-from tools_backend import chatbot, retrieve_all_threads
+from rag_backend import chatbot, retrieve_all_threads
 from langchain_core.messages import HumanMessage,AIMessage,ToolMessage
 import uuid
 
@@ -123,7 +123,14 @@ if user_input:
                 # if message is from AI yield it 
               if isinstance(message_chunk, AIMessage):
                   # yield only AI message
-                  yield message_chunk.content
+                  content = message_chunk.content
+
+                  if isinstance(content, list):
+                      for block in content:
+                          if block.get("type") == "text":
+                              yield block.get("text", "")
+                  else:
+                      yield content
 
        ai_message = st.write_stream(ai_only_stream())
        
